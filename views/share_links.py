@@ -46,7 +46,12 @@ def render(collections, user_manager):
 
                     col1, col2 = st.columns(2)
                     with col1:
-                        st.write(f"**Expires:** {expires_at.strftime('%Y-%m-%d %H:%M') if use_mongo else datetime.fromisoformat(expires_at).strftime('%Y-%m-%d %H:%M')}")
+                        # Handle both datetime objects and string formats
+                        if isinstance(expires_at, datetime):
+                            expires_str = expires_at.strftime('%Y-%m-%d %H:%M')
+                        else:
+                            expires_str = datetime.fromisoformat(str(expires_at).replace('Z', '+00:00')).strftime('%Y-%m-%d %H:%M')
+                        st.write(f"**Expires:** {expires_str}")
                     with col2:
                         st.write(f"**Session ID:** {session_id[:12]}...")
 
@@ -95,7 +100,12 @@ def render(collections, user_manager):
 
                     col1, col2 = st.columns(2)
                     with col1:
-                        st.write(f"**Expires:** {expires_at.strftime('%Y-%m-%d %H:%M') if use_mongo else datetime.fromisoformat(expires_at).strftime('%Y-%m-%d %H:%M')}")
+                        # Handle both datetime objects and string formats
+                        if isinstance(expires_at, datetime):
+                            expires_str = expires_at.strftime('%Y-%m-%d %H:%M')
+                        else:
+                            expires_str = datetime.fromisoformat(str(expires_at).replace('Z', '+00:00')).strftime('%Y-%m-%d %H:%M')
+                        st.write(f"**Expires:** {expires_str}")
                     with col2:
                         if max_uses > 0:
                             st.write(f"**Max Uses:** {max_uses}")
@@ -122,12 +132,17 @@ def render(collections, user_manager):
             if sessions:
                 sessions_data = []
                 for session in sessions:
-                    if use_mongo:
-                        expires_str = session["expires_at"].strftime("%Y-%m-%d %H:%M")
-                        created_str = session["created_at"].strftime("%Y-%m-%d %H:%M")
+                    # Handle both datetime objects and string formats
+                    exp_at = session["expires_at"]
+                    cre_at = session["created_at"]
+                    if isinstance(exp_at, datetime):
+                        expires_str = exp_at.strftime("%Y-%m-%d %H:%M")
                     else:
-                        expires_str = datetime.fromisoformat(session["expires_at"]).strftime("%Y-%m-%d %H:%M")
-                        created_str = datetime.fromisoformat(session["created_at"]).strftime("%Y-%m-%d %H:%M")
+                        expires_str = datetime.fromisoformat(str(exp_at).replace('Z', '+00:00')).strftime("%Y-%m-%d %H:%M")
+                    if isinstance(cre_at, datetime):
+                        created_str = cre_at.strftime("%Y-%m-%d %H:%M")
+                    else:
+                        created_str = datetime.fromisoformat(str(cre_at).replace('Z', '+00:00')).strftime("%Y-%m-%d %H:%M")
 
                     sessions_data.append({
                         "Description": session.get("description", "N/A"),
@@ -159,12 +174,17 @@ def render(collections, user_manager):
             if links:
                 links_data = []
                 for link in links:
-                    if use_mongo:
-                        expires_str = link["expires_at"].strftime("%Y-%m-%d %H:%M")
-                        created_str = link["created_at"].strftime("%Y-%m-%d %H:%M")
+                    # Handle both datetime objects and string formats
+                    exp_at = link["expires_at"]
+                    cre_at = link["created_at"]
+                    if isinstance(exp_at, datetime):
+                        expires_str = exp_at.strftime("%Y-%m-%d %H:%M")
                     else:
-                        expires_str = datetime.fromisoformat(link["expires_at"]).strftime("%Y-%m-%d %H:%M")
-                        created_str = datetime.fromisoformat(link["created_at"]).strftime("%Y-%m-%d %H:%M")
+                        expires_str = datetime.fromisoformat(str(exp_at).replace('Z', '+00:00')).strftime("%Y-%m-%d %H:%M")
+                    if isinstance(cre_at, datetime):
+                        created_str = cre_at.strftime("%Y-%m-%d %H:%M")
+                    else:
+                        created_str = datetime.fromisoformat(str(cre_at).replace('Z', '+00:00')).strftime("%Y-%m-%d %H:%M")
 
                     # Lookup student with user isolation
                     student = students_col.find_one({"student_id": link["student_id"], **user_filter})
