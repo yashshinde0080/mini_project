@@ -38,7 +38,7 @@ def render(collections, user_manager):
                         description=description
                     )
 
-                    base_url = "http://localhost:8501"  # Update with your actual URL
+                    base_url = "https://jcer-attendify.streamlit.app/"  # Update with your actual URL
                     link = f"{base_url}?session={session_id}"
 
                     st.success("✅ Session link created successfully!")
@@ -84,7 +84,7 @@ def render(collections, user_manager):
                             {"$set": {"max_uses": max_uses}}
                         )
 
-                    base_url = "http://localhost:8501"  # Update with your actual URL
+                    base_url = "https://jcer-attendify.streamlit.app/"  # Update with your actual URL
                     link = f"{base_url}?student_link={link_id}"
 
                     # Lookup student with user isolation
