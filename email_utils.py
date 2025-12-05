@@ -29,7 +29,7 @@ SENDGRID_FROM_EMAIL = os.getenv("SENDGRID_FROM_EMAIL", "")
 SENDGRID_FROM_NAME = os.getenv("SENDGRID_FROM_NAME", "Smart Attendance System")
 
 # Application URL for reset links
-APP_URL = os.getenv("APP_URL")
+APP_URL = os.getenv("APP_URL", "https://jcer-attendify.streamlit.app/")
 
 # Email Provider Selection
 EMAIL_PROVIDER = os.getenv("EMAIL_PROVIDER", "smtp")  # "smtp" or "sendgrid"
