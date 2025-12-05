@@ -1,0 +1,21 @@
+.github/instructions/kluster-code-verify.instructions.md
+.kluster
+
+# Environment variables (contains secrets - NEVER commit!)
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
+
+# Data files (local JSON storage)
+data/
+
+# IDE
+.vscode/
+.idea/

@@ -1,0 +1,15 @@
+streamlit
+streamlit-cookies-manager
+pandas
+pillow
+qrcode
+opencv-python-headless
+pymongo
+python-dotenv
+werkzeug
+XlsxWriter
+zxing-cpp
+python-barcode
+numpy
+bcrypt
+sendgrid
