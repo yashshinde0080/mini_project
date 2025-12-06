@@ -13,6 +13,12 @@ load_dotenv()
 MONGO_URI = os.getenv("MONGODB_URI") or st.secrets.get("MONGODB_URI")
 DB_NAME = os.getenv("MONGODB_DB") or st.secrets.get("MONGODB_DB")
 
+# Clean up the connection string (remove quotes and whitespace if present)
+if MONGO_URI:
+    MONGO_URI = MONGO_URI.strip().strip('"').strip("'")
+if DB_NAME:
+    DB_NAME = DB_NAME.strip().strip('"').strip("'")
+
 # -------------------- Database Setup --------------------
 use_mongo = True
 client = None
@@ -24,9 +30,21 @@ sessions_col = None
 links_col = None
 
 try:
-    # Increase timeout for production reliability
-    client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=10000)
-    # Force connection test
+    # Validate configuration exists
+    if not MONGO_URI or not DB_NAME:
+        raise ValueError("MONGODB_URI or MONGODB_DB not found in secrets/environment")
+
+    # Increase timeout for production reliability and retry logic
+    client = MongoClient(
+        MONGO_URI,
+        serverSelectionTimeoutMS=15000,
+        connectTimeoutMS=15000,
+        socketTimeoutMS=15000,
+        retryWrites=True,
+        w='majority'
+    )
+
+    # Force connection test - this will raise an exception if connection fails
     client.admin.command('ping')
 
     db = client[DB_NAME]
@@ -65,175 +83,246 @@ try:
         # Index creation failures are non-critical (indexes may already exist)
         print(f"Index note: {idx_error}")
 
-except Exception as e:
-    # MongoDB connection failed - STOP THE APP
-    error_msg = f"FATAL: MongoDB connection failed - {type(e).__name__}: {str(e)}"
-    print(error_msg)
+    print("✅ MongoDB connected successfully")
 
-    # Check if running in local development (has .env file)
+except mongo_errors.ServerSelectionTimeoutError as e:
+    # This is the error you're getting - MongoDB server not reachable
+    error_msg = str(e)
+    print(f"\n{'=' * 80}")
+    print("❌ MongoDB Connection Timeout")
+    print(f"{'=' * 80}")
+    print(f"Error: {error_msg}")
+    print("\n🔧 SOLUTION:")
+    print("1. Go to MongoDB Atlas → Network Access")
+    print("2. Click 'Add IP Address'")
+    print("3. Select 'Allow Access from Anywhere' (0.0.0.0/0)")
+    print("4. This is required for Streamlit Cloud's dynamic IPs")
+    print(f"\n{'=' * 80}\n")
+
+    # Check if running locally
     is_local = os.path.exists('.env')
-
     if is_local:
-        # Local development: allow JSON fallback with warning
-        print("WARNING: Running in local mode with JSON files (data will not persist in production)")
+        print("⚠️  Running locally with JSON fallback")
         use_mongo = False
-
-        data_dir = os.path.join(os.path.dirname(__file__), "data")
-        os.makedirs(data_dir, exist_ok=True)
-        USERS_FILE = os.path.join(data_dir, "users.json")
-        STUDENTS_FILE = os.path.join(data_dir, "students.json")
-        ATT_FILE = os.path.join(data_dir, "attendance.json")
-        SESSIONS_FILE = os.path.join(data_dir, "sessions.json")
-        LINKS_FILE = os.path.join(data_dir, "links.json")
-
-        for f in (USERS_FILE, STUDENTS_FILE, ATT_FILE, SESSIONS_FILE, LINKS_FILE):
-            if not os.path.exists(f):
-                with open(f, "w") as fh:
-                    json.dump([], fh)
-
-
-        class SimpleCol:
-            def __init__(self, path):
-                self.path = path
-
-            def _load(self):
-                try:
-                    with open(self.path, "r") as fh:
-                        data = json.load(fh)
-                    if self.path.endswith(("sessions.json", "links.json")):
-                        now = datetime.now().isoformat()
-                        data = [d for d in data if d.get("expires_at", "9999-12-31") > now]
-                        self._save(data)
-                    return data
-                except (FileNotFoundError, json.JSONDecodeError):
-                    return []
-
-            def _save(self, data):
-                with open(self.path, "w") as fh:
-                    json.dump(data, fh, default=str, indent=2)
-
-            def find_one(self, filt):
-                data = self._load()
-                for d in data:
-                    ok = True
-                    for k, v in (filt or {}).items():
-                        if d.get(k) != v:
-                            ok = False
-                            break
-                    if ok:
-                        return d
-                return None
-
-            def find(self, filt=None):
-                data = self._load()
-                if not filt:
-                    return data
-                out = []
-                for d in data:
-                    ok = True
-                    for k, v in filt.items():
-                        if d.get(k) != v:
-                            ok = False
-                            break
-                    if ok:
-                        out.append(d)
-                return out
-
-            def insert_one(self, doc):
-                data = self._load()
-                data.append(doc)
-                self._save(data)
-                return {"inserted_id": len(data)}
-
-            def update_one(self, filt, update, upsert=False):
-                data = self._load()
-                found = False
-                for i, d in enumerate(data):
-                    ok = True
-                    for k, v in filt.items():
-                        if d.get(k) != v:
-                            ok = False
-                            break
-                    if ok:
-                        if "$set" in update:
-                            for kk, vv in update["$set"].items():
-                                d[kk] = vv
-                        data[i] = d
-                        found = True
-                        break
-                if not found and upsert:
-                    new = dict(filt)
-                    if "$set" in update:
-                        new.update(update["$set"])
-                    data.append(new)
-                self._save(data)
-
-            def update_many(self, filt, update):
-                data = self._load()
-                modified_count = 0
-                for i, d in enumerate(data):
-                    ok = True
-                    for k, v in filt.items():
-                        if isinstance(v, dict) and "$exists" in v:
-                            if v["$exists"] and k not in d:
-                                ok = False
-                            elif not v["$exists"] and k in d:
-                                ok = False
-                        elif d.get(k) != v:
-                            ok = False
-                            break
-                    if ok:
-                        if "$set" in update:
-                            for kk, vv in update["$set"].items():
-                                d[kk] = vv
-                        data[i] = d
-                        modified_count += 1
-                self._save(data)
-                return type('obj', (object,), {'modified_count': modified_count})()
-
-            def delete_many(self, filt):
-                data = self._load()
-                out = []
-                removed = 0
-                for d in data:
-                    match = True
-                    for k, v in (filt or {}).items():
-                        if d.get(k) != v:
-                            match = False
-                            break
-                    if not match:
-                        out.append(d)
-                    else:
-                        removed += 1
-                self._save(out)
-                return {"deleted_count": removed}
-
-            def count_documents(self, filt=None):
-                return len(self.find(filt))
-
-
-        users_col = SimpleCol(USERS_FILE)
-        students_col = SimpleCol(STUDENTS_FILE)
-        att_col = SimpleCol(ATT_FILE)
-        sessions_col = SimpleCol(SESSIONS_FILE)
-        links_col = SimpleCol(LINKS_FILE)
     else:
-        # Production: CRASH IMMEDIATELY, don't proceed
-        print("\n" + "=" * 80)
-        print("PRODUCTION ERROR: Cannot start without MongoDB connection")
-        print("=" * 80)
-        print(f"\nError: {error_msg}")
-        print("\nCheck these in Streamlit Cloud Settings → Secrets:")
-        print("1. MONGODB_URI is set correctly")
-        print("2. MONGODB_DB is set correctly")
-        print("3. MongoDB Atlas Network Access allows 0.0.0.0/0")
-        print("4. MongoDB cluster is not paused")
-        print("\n" + "=" * 80)
-
-        # Force app to crash - this will show in Streamlit logs
         raise RuntimeError(
-            f"MongoDB connection failed in production. Cannot proceed. {error_msg}"
+            "MongoDB connection timeout in production. "
+            "Add 0.0.0.0/0 to MongoDB Atlas Network Access whitelist."
         )
+
+except mongo_errors.OperationFailure as e:
+    # Authentication error - wrong credentials
+    print(f"\n{'=' * 80}")
+    print("❌ MongoDB Authentication Failed")
+    print(f"{'=' * 80}")
+    print(f"Error: {str(e)}")
+    print("\n🔧 SOLUTION:")
+    print("1. Check your MONGODB_URI username and password")
+    print("2. MongoDB Atlas → Database Access → Verify user credentials")
+    print(f"\n{'=' * 80}\n")
+
+    is_local = os.path.exists('.env')
+    if is_local:
+        print("⚠️  Running locally with JSON fallback")
+        use_mongo = False
+    else:
+        raise RuntimeError("MongoDB authentication failed in production. Check credentials.")
+
+except mongo_errors.ConfigurationError as e:
+    # Malformed connection string
+    print(f"\n{'=' * 80}")
+    print("❌ MongoDB Configuration Error")
+    print(f"{'=' * 80}")
+    print(f"Error: {str(e)}")
+    print("\n🔧 SOLUTION:")
+    print("Check your MONGODB_URI format in secrets")
+    print("Should be: mongodb+srv://username:password@cluster.mongodb.net/")
+    print(f"\n{'=' * 80}\n")
+
+    is_local = os.path.exists('.env')
+    if is_local:
+        print("⚠️  Running locally with JSON fallback")
+        use_mongo = False
+    else:
+        raise RuntimeError("MongoDB URI configuration error. Check connection string format.")
+
+except ValueError as e:
+    # Missing configuration
+    print(f"\n{'=' * 80}")
+    print("❌ Missing MongoDB Configuration")
+    print(f"{'=' * 80}")
+    print(f"Error: {str(e)}")
+    print("\n🔧 SOLUTION:")
+    print("Add these to Streamlit Cloud Settings → Secrets:")
+    print('MONGODB_URI = "mongodb+srv://user:pass@cluster.mongodb.net/"')
+    print('MONGODB_DB = "your_database_name"')
+    print(f"\n{'=' * 80}\n")
+
+    is_local = os.path.exists('.env')
+    if is_local:
+        print("⚠️  Running locally with JSON fallback")
+        use_mongo = False
+    else:
+        raise RuntimeError("MongoDB configuration missing. Add MONGODB_URI and MONGODB_DB to secrets.")
+
+except Exception as e:
+    # Unexpected error
+    error_msg = f"{type(e).__name__}: {str(e)}"
+    print(f"\n{'=' * 80}")
+    print("❌ Unexpected MongoDB Error")
+    print(f"{'=' * 80}")
+    print(f"Error: {error_msg}")
+    print(f"\n{'=' * 80}\n")
+
+    is_local = os.path.exists('.env')
+    if is_local:
+        print("⚠️  Running locally with JSON fallback")
+        use_mongo = False
+    else:
+        raise RuntimeError(f"Unexpected database error: {error_msg}")
+
+# -------------------- JSON Fallback for Local Development --------------------
+if not use_mongo:
+    print("🔄 Initializing local JSON storage (development mode)")
+    data_dir = os.path.join(os.path.dirname(__file__), "data")
+    os.makedirs(data_dir, exist_ok=True)
+    USERS_FILE = os.path.join(data_dir, "users.json")
+    STUDENTS_FILE = os.path.join(data_dir, "students.json")
+    ATT_FILE = os.path.join(data_dir, "attendance.json")
+    SESSIONS_FILE = os.path.join(data_dir, "sessions.json")
+    LINKS_FILE = os.path.join(data_dir, "links.json")
+
+    for f in (USERS_FILE, STUDENTS_FILE, ATT_FILE, SESSIONS_FILE, LINKS_FILE):
+        if not os.path.exists(f):
+            with open(f, "w") as fh:
+                json.dump([], fh)
+
+
+    class SimpleCol:
+        def __init__(self, path):
+            self.path = path
+
+        def _load(self):
+            try:
+                with open(self.path, "r") as fh:
+                    data = json.load(fh)
+                if self.path.endswith(("sessions.json", "links.json")):
+                    now = datetime.now().isoformat()
+                    data = [d for d in data if d.get("expires_at", "9999-12-31") > now]
+                    self._save(data)
+                return data
+            except (FileNotFoundError, json.JSONDecodeError):
+                return []
+
+        def _save(self, data):
+            with open(self.path, "w") as fh:
+                json.dump(data, fh, default=str, indent=2)
+
+        def find_one(self, filt):
+            data = self._load()
+            for d in data:
+                ok = True
+                for k, v in (filt or {}).items():
+                    if d.get(k) != v:
+                        ok = False
+                        break
+                if ok:
+                    return d
+            return None
+
+        def find(self, filt=None):
+            data = self._load()
+            if not filt:
+                return data
+            out = []
+            for d in data:
+                ok = True
+                for k, v in filt.items():
+                    if d.get(k) != v:
+                        ok = False
+                        break
+                if ok:
+                    out.append(d)
+            return out
+
+        def insert_one(self, doc):
+            data = self._load()
+            data.append(doc)
+            self._save(data)
+            return {"inserted_id": len(data)}
+
+        def update_one(self, filt, update, upsert=False):
+            data = self._load()
+            found = False
+            for i, d in enumerate(data):
+                ok = True
+                for k, v in filt.items():
+                    if d.get(k) != v:
+                        ok = False
+                        break
+                if ok:
+                    if "$set" in update:
+                        for kk, vv in update["$set"].items():
+                            d[kk] = vv
+                    data[i] = d
+                    found = True
+                    break
+            if not found and upsert:
+                new = dict(filt)
+                if "$set" in update:
+                    new.update(update["$set"])
+                data.append(new)
+            self._save(data)
+
+        def update_many(self, filt, update):
+            data = self._load()
+            modified_count = 0
+            for i, d in enumerate(data):
+                ok = True
+                for k, v in filt.items():
+                    if isinstance(v, dict) and "$exists" in v:
+                        if v["$exists"] and k not in d:
+                            ok = False
+                        elif not v["$exists"] and k in d:
+                            ok = False
+                    elif d.get(k) != v:
+                        ok = False
+                        break
+                if ok:
+                    if "$set" in update:
+                        for kk, vv in update["$set"].items():
+                            d[kk] = vv
+                    data[i] = d
+                    modified_count += 1
+            self._save(data)
+            return type('obj', (object,), {'modified_count': modified_count})()
+
+        def delete_many(self, filt):
+            data = self._load()
+            out = []
+            removed = 0
+            for d in data:
+                match = True
+                for k, v in (filt or {}).items():
+                    if d.get(k) != v:
+                        match = False
+                        break
+                if not match:
+                    out.append(d)
+                else:
+                    removed += 1
+            self._save(out)
+            return {"deleted_count": removed}
+
+        def count_documents(self, filt=None):
+            return len(self.find(filt))
+
+
+    users_col = SimpleCol(USERS_FILE)
+    students_col = SimpleCol(STUDENTS_FILE)
+    att_col = SimpleCol(ATT_FILE)
+    sessions_col = SimpleCol(SESSIONS_FILE)
+    links_col = SimpleCol(LINKS_FILE)
 
 
 # -------------------- Helper Functions --------------------
@@ -370,11 +459,11 @@ def get_collections():
     }
 
 
-# -------------------- Critical: Check actual connection status --------------------
+# -------------------- Database Status Check --------------------
 def get_database_status():
     """
     Get current database connection status.
-    Call this from your main app to verify connection.
+    Returns connection info for debugging.
     """
     status = {
         'connected': use_mongo,
