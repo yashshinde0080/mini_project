@@ -1,10 +1,11 @@
 import os
+import base64
 import io
 import zipfile
 import pandas as pd
 import streamlit as st
 from PIL import Image
-from helpers import get_students_df, make_qr, make_barcode, get_user_filter
+from helpers import get_students_df, make_qr, make_barcode, get_user_filter, get_qr_image, get_barcode_image
 
 
 def render(collections):
@@ -31,12 +32,27 @@ def render(collections):
                         st.warning("⚠️ Student ID already exists in your records")
                     else:
                         try:
+                            # Generate Base64 images for persistence
+                            qr_img = get_qr_image(sid)
+                            qr_buf = io.BytesIO()
+                            qr_img.save(qr_buf, format="PNG")
+                            qr_b64 = base64.b64encode(qr_buf.getvalue()).decode()
+                            
+                            bc_b64 = None
+                            bc_img = get_barcode_image(sid)
+                            if bc_img:
+                                bc_buf = io.BytesIO()
+                                bc_img.save(bc_buf, format="PNG")
+                                bc_b64 = base64.b64encode(bc_buf.getvalue()).decode()
+
                             students_col.insert_one({
                                 "student_id": sid,
                                 "name": name,
                                 "course": course,
-                                "qr_path": None,  # Generated on-the-fly
-                                "barcode_path": None,  # Generated on-the-fly
+                                "qr_path": None,
+                                "barcode_path": None,
+                                "qr_code": qr_b64,
+                                "barcode": bc_b64,
                                 "created_by": st.session_state.auth.get("username")
                             })
                             st.success(f"✅ Student {name} added successfully with QR code and barcode generated")
@@ -74,12 +90,27 @@ def render(collections):
                         st.warning("⚠️ Student ID already exists in your records")
                     else:
                         try:
+                            # Generate Base64 images for persistence
+                            qr_img = get_qr_image(scanner_student_id)
+                            qr_buf = io.BytesIO()
+                            qr_img.save(qr_buf, format="PNG")
+                            qr_b64 = base64.b64encode(qr_buf.getvalue()).decode()
+                            
+                            bc_b64 = None
+                            bc_img = get_barcode_image(scanner_student_id)
+                            if bc_img:
+                                bc_buf = io.BytesIO()
+                                bc_img.save(bc_buf, format="PNG")
+                                bc_b64 = base64.b64encode(bc_buf.getvalue()).decode()
+
                             students_col.insert_one({
                                 "student_id": scanner_student_id,
                                 "name": scanner_student_name,
                                 "course": scanner_course,
                                 "qr_path": None,
                                 "barcode_path": None,
+                                "qr_code": qr_b64,
+                                "barcode": bc_b64,
                                 "created_by": st.session_state.auth.get("username")
                             })
                             st.success(f"✅ Student {scanner_student_name} added successfully with QR code and barcode generated")
@@ -112,12 +143,27 @@ def render(collections):
                         continue
 
                     try:
+                        # Generate Base64 images for persistence
+                        qr_img = get_qr_image(sid)
+                        qr_buf = io.BytesIO()
+                        qr_img.save(qr_buf, format="PNG")
+                        qr_b64 = base64.b64encode(qr_buf.getvalue()).decode()
+                        
+                        bc_b64 = None
+                        bc_img = get_barcode_image(sid)
+                        if bc_img:
+                            bc_buf = io.BytesIO()
+                            bc_img.save(bc_buf, format="PNG")
+                            bc_b64 = base64.b64encode(bc_buf.getvalue()).decode()
+
                         students_col.insert_one({
                             "student_id": sid,
                             "name": name,
                             "course": course,
                             "qr_path": None,
                             "barcode_path": None,
+                            "qr_code": qr_b64,
+                            "barcode": bc_b64,
                             "created_by": st.session_state.auth.get("username")
                         })
                         inserted += 1
@@ -173,35 +219,47 @@ def render(collections):
 
             with col1:
                 st.markdown("**QR Code:**")
-                # Generate on the fly
-                qr_img = get_qr_image(selected_student)
                 
-                # Convert to bytes for robust Streamlit display (Fixed TypeError)
-                buf = io.BytesIO()
-                qr_img.save(buf, format="PNG")
-                byte_im = buf.getvalue()
+                # Check if we have stored base64 image
+                byte_im = None
+                if student.get("qr_code"):
+                    try:
+                        byte_im = base64.b64decode(student["qr_code"])
+                    except:
+                        pass
                 
+                if not byte_im:
+                    # Fallback: Generate on the fly
+                    qr_img = get_qr_image(selected_student)
+                    buf = io.BytesIO()
+                    qr_img.save(buf, format="PNG")
+                    byte_im = buf.getvalue()
+
                 st.image(byte_im, width=200)
-                
-                # Use same buffer for download
-                buf.seek(0)
-                st.download_button("📥 Download QR", buf, file_name=f"{selected_student}_qr.png", mime="image/png")
+                st.download_button("📥 Download QR", byte_im, file_name=f"{selected_student}_qr.png", mime="image/png")
 
             with col2:
                 st.markdown("**Barcode:**")
-                # Generate on the fly
-                barcode_img_pil = get_barcode_image(selected_student)
-                if barcode_img_pil:
-                    # Convert to bytes for robust Streamlit display
-                    buf = io.BytesIO()
-                    barcode_img_pil.save(buf, format="PNG")
-                    byte_im = buf.getvalue()
-                    
+                
+                # Check if we have stored base64 image
+                byte_im = None
+                if student.get("barcode"):
+                    try:
+                        byte_im = base64.b64decode(student["barcode"])
+                    except:
+                        pass
+                
+                if not byte_im:
+                    # Fallback: Generate on the fly
+                    barcode_img_pil = get_barcode_image(selected_student)
+                    if barcode_img_pil:
+                        buf = io.BytesIO()
+                        barcode_img_pil.save(buf, format="PNG")
+                        byte_im = buf.getvalue()
+
+                if byte_im:
                     st.image(byte_im, width=200)
-                    
-                    # Use same buffer for download
-                    buf.seek(0)
-                    st.download_button("📥 Download Barcode", buf, file_name=f"{selected_student}_barcode.png", mime="image/png")
+                    st.download_button("📥 Download Barcode", byte_im, file_name=f"{selected_student}_barcode.png", mime="image/png")
                 else:
                     st.warning("Barcode generation unavailable")
 
