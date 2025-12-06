@@ -4,19 +4,31 @@ import uuid
 from datetime import datetime
 from pymongo import MongoClient, errors as mongo_errors
 from dotenv import load_dotenv
+import streamlit as st
 
 # Load environment variables from .env file
 load_dotenv()
 
 # -------------------- MongoDB Configuration --------------------
-MONGO_URI = os.getenv("MONGODB_URI")
-DB_NAME = os.getenv("MONGODB_DB")
+MONGO_URI = os.getenv("MONGODB_URI") or st.secrets.get("MONGODB_URI")
+DB_NAME = os.getenv("MONGODB_DB") or st.secrets.get("MONGODB_DB")
 
 # -------------------- Database Setup --------------------
 use_mongo = True
+client = None
+db = None
+users_col = None
+students_col = None
+att_col = None
+sessions_col = None
+links_col = None
+
 try:
-    client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=2000)
-    client.server_info()
+    # Increase timeout for production reliability
+    client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=10000)
+    # Force connection test
+    client.admin.command('ping')
+
     db = client[DB_NAME]
     users_col = db["users"]
     students_col = db["students"]
@@ -25,171 +37,203 @@ try:
     links_col = db["attendance_links"]
 
     # Create indexes for user isolation and data integrity
-    # Users collection - unique username and email, plus user_id for referential integrity
-    users_col.create_index("username", unique=True)
-    users_col.create_index("user_id", unique=True, sparse=True)
-    users_col.create_index("email", unique=True, sparse=True)
-    users_col.create_index("password_reset_token")
+    # Use background=True to avoid blocking on index creation
+    try:
+        # Users collection - unique username and email, plus user_id for referential integrity
+        users_col.create_index("username", unique=True, background=True)
+        users_col.create_index("user_id", unique=True, sparse=True, background=True)
+        users_col.create_index("email", unique=True, sparse=True, background=True)
+        users_col.create_index("password_reset_token", background=True)
 
-    # Students collection - compound unique index on (student_id, created_by) for user isolation
-    # This allows different users to have students with the same student_id
-    students_col.create_index([("student_id", 1), ("created_by", 1)], unique=True)
-    students_col.create_index("created_by")  # Index for efficient user-filtered queries
+        # Students collection - compound unique index on (student_id, created_by) for user isolation
+        students_col.create_index([("student_id", 1), ("created_by", 1)], unique=True, background=True)
+        students_col.create_index("created_by", background=True)
 
-    # Attendance collection - compound unique index on (student_id, date, created_by) for user isolation
-    # This allows different users to mark attendance for students with the same ID
-    att_col.create_index([("student_id", 1), ("date", 1), ("created_by", 1)], unique=True)
-    att_col.create_index("created_by")  # Index for efficient user-filtered queries
-    att_col.create_index([("created_by", 1), ("date", 1)])  # Compound index for date range queries
+        # Attendance collection - compound unique index on (student_id, date, created_by) for user isolation
+        att_col.create_index([("student_id", 1), ("date", 1), ("created_by", 1)], unique=True, background=True)
+        att_col.create_index("created_by", background=True)
+        att_col.create_index([("created_by", 1), ("date", 1)], background=True)
 
-    # Sessions and links collections
-    sessions_col.create_index("session_id", unique=True)
-    sessions_col.create_index("created_by")
-    sessions_col.create_index("expires_at", expireAfterSeconds=0)
-    links_col.create_index("link_id", unique=True)
-    links_col.create_index("created_by")
-    links_col.create_index("expires_at", expireAfterSeconds=0)
+        # Sessions and links collections
+        sessions_col.create_index("session_id", unique=True, background=True)
+        sessions_col.create_index("created_by", background=True)
+        sessions_col.create_index("expires_at", expireAfterSeconds=0, background=True)
+        links_col.create_index("link_id", unique=True, background=True)
+        links_col.create_index("created_by", background=True)
+        links_col.create_index("expires_at", expireAfterSeconds=0, background=True)
+    except Exception as idx_error:
+        # Index creation failures are non-critical (indexes may already exist)
+        print(f"Index note: {idx_error}")
 
 except Exception as e:
-    use_mongo = False
-    data_dir = os.path.join(os.path.dirname(__file__), "data")
-    os.makedirs(data_dir, exist_ok=True)
-    USERS_FILE = os.path.join(data_dir, "users.json")
-    STUDENTS_FILE = os.path.join(data_dir, "students.json")
-    ATT_FILE = os.path.join(data_dir, "attendance.json")
-    SESSIONS_FILE = os.path.join(data_dir, "sessions.json")
-    LINKS_FILE = os.path.join(data_dir, "links.json")
+    # MongoDB connection failed - STOP THE APP
+    error_msg = f"FATAL: MongoDB connection failed - {type(e).__name__}: {str(e)}"
+    print(error_msg)
 
-    for f in (USERS_FILE, STUDENTS_FILE, ATT_FILE, SESSIONS_FILE, LINKS_FILE):
-        if not os.path.exists(f):
-            with open(f, "w") as fh:
-                json.dump([], fh)
+    # Check if running in local development (has .env file)
+    is_local = os.path.exists('.env')
 
-    class SimpleCol:
-        def __init__(self, path):
-            self.path = path
+    if is_local:
+        # Local development: allow JSON fallback with warning
+        print("WARNING: Running in local mode with JSON files (data will not persist in production)")
+        use_mongo = False
 
-        def _load(self):
-            try:
-                with open(self.path, "r") as fh:
-                    data = json.load(fh)
-                if self.path.endswith(("sessions.json", "links.json")):
-                    now = datetime.now().isoformat()
-                    data = [d for d in data if d.get("expires_at", "9999-12-31") > now]
-                    self._save(data)
-                return data
-            except (FileNotFoundError, json.JSONDecodeError):
-                return []
+        data_dir = os.path.join(os.path.dirname(__file__), "data")
+        os.makedirs(data_dir, exist_ok=True)
+        USERS_FILE = os.path.join(data_dir, "users.json")
+        STUDENTS_FILE = os.path.join(data_dir, "students.json")
+        ATT_FILE = os.path.join(data_dir, "attendance.json")
+        SESSIONS_FILE = os.path.join(data_dir, "sessions.json")
+        LINKS_FILE = os.path.join(data_dir, "links.json")
 
-        def _save(self, data):
-            with open(self.path, "w") as fh:
-                json.dump(data, fh, default=str, indent=2)
+        for f in (USERS_FILE, STUDENTS_FILE, ATT_FILE, SESSIONS_FILE, LINKS_FILE):
+            if not os.path.exists(f):
+                with open(f, "w") as fh:
+                    json.dump([], fh)
 
-        def find_one(self, filt):
-            data = self._load()
-            for d in data:
-                ok = True
-                for k, v in (filt or {}).items():
-                    if d.get(k) != v:
-                        ok = False
-                        break
-                if ok:
-                    return d
-            return None
 
-        def find(self, filt=None):
-            data = self._load()
-            if not filt:
-                return data
-            out = []
-            for d in data:
-                ok = True
-                for k, v in filt.items():
-                    if d.get(k) != v:
-                        ok = False
-                        break
-                if ok:
-                    out.append(d)
-            return out
+        class SimpleCol:
+            def __init__(self, path):
+                self.path = path
 
-        def insert_one(self, doc):
-            data = self._load()
-            data.append(doc)
-            self._save(data)
-            return {"inserted_id": len(data)}
+            def _load(self):
+                try:
+                    with open(self.path, "r") as fh:
+                        data = json.load(fh)
+                    if self.path.endswith(("sessions.json", "links.json")):
+                        now = datetime.now().isoformat()
+                        data = [d for d in data if d.get("expires_at", "9999-12-31") > now]
+                        self._save(data)
+                    return data
+                except (FileNotFoundError, json.JSONDecodeError):
+                    return []
 
-        def update_one(self, filt, update, upsert=False):
-            data = self._load()
-            found = False
-            for i, d in enumerate(data):
-                ok = True
-                for k, v in filt.items():
-                    if d.get(k) != v:
-                        ok = False
-                        break
-                if ok:
-                    if "$set" in update:
-                        for kk, vv in update["$set"].items():
-                            d[kk] = vv
-                    data[i] = d
-                    found = True
-                    break
-            if not found and upsert:
-                new = dict(filt)
-                if "$set" in update:
-                    new.update(update["$set"])
-                data.append(new)
-            self._save(data)
+            def _save(self, data):
+                with open(self.path, "w") as fh:
+                    json.dump(data, fh, default=str, indent=2)
 
-        def update_many(self, filt, update):
-            data = self._load()
-            modified_count = 0
-            for i, d in enumerate(data):
-                ok = True
-                for k, v in filt.items():
-                    # Handle MongoDB operators like $exists
-                    if isinstance(v, dict) and "$exists" in v:
-                        if v["$exists"] and k not in d:
+            def find_one(self, filt):
+                data = self._load()
+                for d in data:
+                    ok = True
+                    for k, v in (filt or {}).items():
+                        if d.get(k) != v:
                             ok = False
-                        elif not v["$exists"] and k in d:
+                            break
+                    if ok:
+                        return d
+                return None
+
+            def find(self, filt=None):
+                data = self._load()
+                if not filt:
+                    return data
+                out = []
+                for d in data:
+                    ok = True
+                    for k, v in filt.items():
+                        if d.get(k) != v:
                             ok = False
-                    elif d.get(k) != v:
-                        ok = False
+                            break
+                    if ok:
+                        out.append(d)
+                return out
+
+            def insert_one(self, doc):
+                data = self._load()
+                data.append(doc)
+                self._save(data)
+                return {"inserted_id": len(data)}
+
+            def update_one(self, filt, update, upsert=False):
+                data = self._load()
+                found = False
+                for i, d in enumerate(data):
+                    ok = True
+                    for k, v in filt.items():
+                        if d.get(k) != v:
+                            ok = False
+                            break
+                    if ok:
+                        if "$set" in update:
+                            for kk, vv in update["$set"].items():
+                                d[kk] = vv
+                        data[i] = d
+                        found = True
                         break
-                if ok:
+                if not found and upsert:
+                    new = dict(filt)
                     if "$set" in update:
-                        for kk, vv in update["$set"].items():
-                            d[kk] = vv
-                    data[i] = d
-                    modified_count += 1
-            self._save(data)
-            return type('obj', (object,), {'modified_count': modified_count})()
+                        new.update(update["$set"])
+                    data.append(new)
+                self._save(data)
 
-        def delete_many(self, filt):
-            data = self._load()
-            out = []
-            removed = 0
-            for d in data:
-                match = True
-                for k, v in (filt or {}).items():
-                    if d.get(k) != v:
-                        match = False
-                        break
-                if not match:
-                    out.append(d)
-                else:
-                    removed += 1
-            self._save(out)
-            return {"deleted_count": removed}
+            def update_many(self, filt, update):
+                data = self._load()
+                modified_count = 0
+                for i, d in enumerate(data):
+                    ok = True
+                    for k, v in filt.items():
+                        if isinstance(v, dict) and "$exists" in v:
+                            if v["$exists"] and k not in d:
+                                ok = False
+                            elif not v["$exists"] and k in d:
+                                ok = False
+                        elif d.get(k) != v:
+                            ok = False
+                            break
+                    if ok:
+                        if "$set" in update:
+                            for kk, vv in update["$set"].items():
+                                d[kk] = vv
+                        data[i] = d
+                        modified_count += 1
+                self._save(data)
+                return type('obj', (object,), {'modified_count': modified_count})()
 
-        def count_documents(self, filt=None):
-            return len(self.find(filt))
+            def delete_many(self, filt):
+                data = self._load()
+                out = []
+                removed = 0
+                for d in data:
+                    match = True
+                    for k, v in (filt or {}).items():
+                        if d.get(k) != v:
+                            match = False
+                            break
+                    if not match:
+                        out.append(d)
+                    else:
+                        removed += 1
+                self._save(out)
+                return {"deleted_count": removed}
 
-    users_col = SimpleCol(USERS_FILE)
-    students_col = SimpleCol(STUDENTS_FILE)
-    att_col = SimpleCol(ATT_FILE)
-    sessions_col = SimpleCol(SESSIONS_FILE)
-    links_col = SimpleCol(LINKS_FILE)
+            def count_documents(self, filt=None):
+                return len(self.find(filt))
+
+
+        users_col = SimpleCol(USERS_FILE)
+        students_col = SimpleCol(STUDENTS_FILE)
+        att_col = SimpleCol(ATT_FILE)
+        sessions_col = SimpleCol(SESSIONS_FILE)
+        links_col = SimpleCol(LINKS_FILE)
+    else:
+        # Production: CRASH IMMEDIATELY, don't proceed
+        print("\n" + "=" * 80)
+        print("PRODUCTION ERROR: Cannot start without MongoDB connection")
+        print("=" * 80)
+        print(f"\nError: {error_msg}")
+        print("\nCheck these in Streamlit Cloud Settings → Secrets:")
+        print("1. MONGODB_URI is set correctly")
+        print("2. MONGODB_DB is set correctly")
+        print("3. MongoDB Atlas Network Access allows 0.0.0.0/0")
+        print("4. MongoDB cluster is not paused")
+        print("\n" + "=" * 80)
+
+        # Force app to crash - this will show in Streamlit logs
+        raise RuntimeError(
+            f"MongoDB connection failed in production. Cannot proceed. {error_msg}"
+        )
 
 
 # -------------------- Helper Functions --------------------
@@ -324,3 +368,28 @@ def get_collections():
         'links': links_col,
         'use_mongo': use_mongo
     }
+
+
+# -------------------- Critical: Check actual connection status --------------------
+def get_database_status():
+    """
+    Get current database connection status.
+    Call this from your main app to verify connection.
+    """
+    status = {
+        'connected': use_mongo,
+        'type': 'MongoDB' if use_mongo else 'JSON (ephemeral)',
+        'database': DB_NAME if use_mongo else 'local files',
+        'persistent': use_mongo
+    }
+
+    if use_mongo:
+        try:
+            # Test if we can actually query
+            users_col.find_one({"_test": "connection"})
+            status['query_test'] = 'OK'
+        except Exception as e:
+            status['query_test'] = f'FAILED: {str(e)}'
+            status['persistent'] = False
+
+    return status

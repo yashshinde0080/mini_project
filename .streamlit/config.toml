@@ -4,3 +4,8 @@ showErrorDetails = false
 [logger]
 level = "error"
 
+MONGODB_URI = "mongodb+srv://syash0080_db_user:yashshinde0080@mini-project.do1glvz.mongodb.net/"
+MONGODB_DB = "smart_attendance_enhanced"
+COOKIE_SECRET = "your-super-secret-cookie-key-change-in-production"
+PUBLIC_BASE_URL = "https://jcer-attendify.streamlit.app/"
+
