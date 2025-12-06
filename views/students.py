@@ -215,7 +215,7 @@ def render(collections):
             student = students_col.find_one({"student_id": selected_student, **user_filter})
             col1, col2 = st.columns(2)
             
-            from helpers import get_qr_image, get_barcode_image
+
 
             with col1:
                 st.markdown("**QR Code:**")
