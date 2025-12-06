@@ -176,7 +176,7 @@ def render(collections):
                 # Generate on the fly
                 qr_img = get_qr_image(selected_student)
                 
-                # Convert to bytes for robust Streamlit display
+                # Convert to bytes for robust Streamlit display (Fixed TypeError)
                 buf = io.BytesIO()
                 qr_img.save(buf, format="PNG")
                 byte_im = buf.getvalue()
