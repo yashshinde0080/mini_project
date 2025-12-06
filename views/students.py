@@ -31,14 +31,12 @@ def render(collections):
                         st.warning("⚠️ Student ID already exists in your records")
                     else:
                         try:
-                            qr_path = make_qr(sid)
-                            barcode_path = make_barcode(sid)
                             students_col.insert_one({
                                 "student_id": sid,
                                 "name": name,
                                 "course": course,
-                                "qr_path": qr_path,
-                                "barcode_path": barcode_path,
+                                "qr_path": None,  # Generated on-the-fly
+                                "barcode_path": None,  # Generated on-the-fly
                                 "created_by": st.session_state.auth.get("username")
                             })
                             st.success(f"✅ Student {name} added successfully with QR code and barcode generated")
@@ -76,14 +74,12 @@ def render(collections):
                         st.warning("⚠️ Student ID already exists in your records")
                     else:
                         try:
-                            qr_path = make_qr(scanner_student_id)
-                            barcode_path = make_barcode(scanner_student_id)
                             students_col.insert_one({
                                 "student_id": scanner_student_id,
                                 "name": scanner_student_name,
                                 "course": scanner_course,
-                                "qr_path": qr_path,
-                                "barcode_path": barcode_path,
+                                "qr_path": None,
+                                "barcode_path": None,
                                 "created_by": st.session_state.auth.get("username")
                             })
                             st.success(f"✅ Student {scanner_student_name} added successfully with QR code and barcode generated")
@@ -116,14 +112,12 @@ def render(collections):
                         continue
 
                     try:
-                        qr_path = make_qr(sid)
-                        barcode_path = make_barcode(sid)
                         students_col.insert_one({
                             "student_id": sid,
                             "name": name,
                             "course": course,
-                            "qr_path": qr_path,
-                            "barcode_path": barcode_path,
+                            "qr_path": None,
+                            "barcode_path": None,
                             "created_by": st.session_state.auth.get("username")
                         })
                         inserted += 1
@@ -174,41 +168,61 @@ def render(collections):
             user_filter = get_user_filter()
             student = students_col.find_one({"student_id": selected_student, **user_filter})
             col1, col2 = st.columns(2)
+            
+            from helpers import get_qr_image, get_barcode_image
 
             with col1:
                 st.markdown("**QR Code:**")
-                if os.path.exists(student.get("qr_path", "")):
-                    qr_img = Image.open(student["qr_path"])
-                    st.image(qr_img, width=200)
-                    with open(student["qr_path"], "rb") as f:
-                        st.download_button("📥 Download QR", f, file_name=f"{selected_student}_qr.png")
-                else:
-                    st.warning("QR code not found")
+                # Generate on the fly
+                qr_img = get_qr_image(selected_student)
+                st.image(qr_img, width=200)
+                
+                # buffer for download
+                buf = io.BytesIO()
+                qr_img.save(buf, format="PNG")
+                buf.seek(0)
+                
+                st.download_button("📥 Download QR", buf, file_name=f"{selected_student}_qr.png", mime="image/png")
 
             with col2:
                 st.markdown("**Barcode:**")
-                if os.path.exists(student.get("barcode_path", "")):
-                    barcode_img = Image.open(student["barcode_path"])
-                    st.image(barcode_img, width=200)
-                    with open(student["barcode_path"], "rb") as f:
-                        st.download_button("📥 Download Barcode", f, file_name=f"{selected_student}_barcode.png")
+                # Generate on the fly
+                barcode_img_pil = get_barcode_image(selected_student)
+                if barcode_img_pil:
+                    st.image(barcode_img_pil, width=200)
+                    
+                    # buffer for download
+                    buf = io.BytesIO()
+                    barcode_img_pil.save(buf, format="PNG")
+                    buf.seek(0)
+                    
+                    st.download_button("📥 Download Barcode", buf, file_name=f"{selected_student}_barcode.png", mime="image/png")
                 else:
-                    st.warning("Barcode not found")
+                    st.warning("Barcode generation unavailable")
 
         st.subheader("📦 Download All QR Codes/Barcodes")
         if st.button("📦 Download All as ZIP"):
             zip_buffer = io.BytesIO()
             user_filter = get_user_filter()
+            
+            from helpers import get_qr_image, get_barcode_image
+            
             with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
                 for _, student in df_students.iterrows():
                     sid = student["student_id"]
-                    # Lookup student with user isolation
-                    student_data = students_col.find_one({"student_id": sid, **user_filter})
-
-                    if student_data and os.path.exists(student_data.get("qr_path", "")):
-                        zip_file.write(student_data["qr_path"], f"{sid}_qr.png")
-                    if student_data and os.path.exists(student_data.get("barcode_path", "")):
-                        zip_file.write(student_data["barcode_path"], f"{sid}_barcode.png")
+                    
+                    # QR
+                    qr_img = get_qr_image(sid)
+                    qr_buf = io.BytesIO()
+                    qr_img.save(qr_buf, format="PNG")
+                    zip_file.writestr(f"{sid}_qr.png", qr_buf.getvalue())
+                    
+                    # Barcode
+                    bc_img = get_barcode_image(sid)
+                    if bc_img:
+                        bc_buf = io.BytesIO()
+                        bc_img.save(bc_buf, format="PNG")
+                        zip_file.writestr(f"{sid}_barcode.png", bc_buf.getvalue())
 
             zip_buffer.seek(0)
             st.download_button(

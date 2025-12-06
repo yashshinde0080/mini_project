@@ -1,4 +1,5 @@
 import os
+import io
 from datetime import datetime, timedelta
 import pandas as pd
 import qrcode
@@ -70,25 +71,47 @@ def is_admin():
 
 
 # -------------------- QR and Barcode Generation --------------------
+# -------------------- QR and Barcode Generation --------------------
+def get_qr_image(student_id):
+    """Generate QR code image in memory"""
+    return qrcode.make(student_id, box_size=10, border=4)
+
+def get_barcode_image(student_id):
+    """Generate barcode image in memory"""
+    if not BARCODE_GENERATION_AVAILABLE:
+        return None
+    try:
+        code128 = barcode.get_barcode_class('code128')
+        # We need to write to a BytesIO-like object, but python-barcode writes files.
+        # Workaround: Use ImageWriter and render to a robust internal object if possible,
+        # but python-barcode is file-centric.
+        # Alternative: Just use the SVG or default writer if ImageWriter fails, but we want PNG.
+        
+        # Actually, python-barcode's render() returns the PIL image directly with ImageWriter
+        rv = io.BytesIO()
+        barcode_img = code128(student_id, writer=ImageWriter())
+        return barcode_img.render()
+    except Exception as e:
+        # st.error(f"Error generating barcode: {e}")
+        return None
+
 def make_qr(student_id):
-    """Generate QR code for student"""
-    img = qrcode.make(student_id, box_size=10, border=4)
+    """Generate QR code for student and save to disk (legacy support + caching)"""
+    img = get_qr_image(student_id)
     path = os.path.join(QR_FOLDER, f"{student_id}_qr.png")
     img.save(path)
     return path
 
-
 def make_barcode(student_id):
-    """Generate barcode for student"""
-    try:
-        code128 = barcode.get_barcode_class('code128')
-        barcode_img = code128(student_id, writer=ImageWriter())
+    """Generate barcode for student and save to disk"""
+    img = get_barcode_image(student_id)
+    if img:
         path = os.path.join(BARCODE_FOLDER, f"{student_id}_barcode")
-        barcode_img.save(path)
+        # specific to how we save it - if using PIL image
+        with open(f"{path}.png", "wb") as f:
+            img.save(f, format="PNG")
         return f"{path}.png"
-    except Exception as e:
-        st.error(f"Error generating barcode: {e}")
-        return None
+    return None
 
 
 def decode_from_camera(pil_img):
@@ -165,6 +188,7 @@ def decode_from_camera(pil_img):
 
 
 # -------------------- Attendance Functions --------------------
+# -------------------- Attendance Functions --------------------
 def mark_attendance(att_col, use_mongo, student_id, status, when_dt=None, course=None, method="manual", created_by_override=None):
     """Mark attendance for a student with user isolation"""
     when_dt = when_dt or datetime.now()
@@ -182,37 +206,20 @@ def mark_attendance(att_col, use_mongo, student_id, status, when_dt=None, course
     # This allows different teachers to have students with the same ID
     duplicate_check = {"student_id": student_id, "date": date_str, "created_by": created_by}
 
-    if use_mongo:
-        if att_col.find_one(duplicate_check):
-            return {"error": "already"}
-        doc = {
-            "student_id": student_id,
-            "date": date_str,
-            "time": when_dt.strftime("%H:%M:%S"),
-            "status": int(status),
-            "course": course,
-            "method": method,
-            "ts": when_dt,
-            "created_by": created_by
-        }
-        att_col.insert_one(doc)
-        return {"ok": True, **doc}
-    else:
-        existing = att_col.find_one(duplicate_check)
-        if existing:
-            return {"error": "already"}
-        doc = {
-            "student_id": student_id,
-            "date": date_str,
-            "time": when_dt.strftime("%H:%M:%S"),
-            "status": int(status),
-            "course": course,
-            "method": method,
-            "ts": when_dt.isoformat(),
-            "created_by": created_by
-        }
-        att_col.insert_one(doc)
-        return {"ok": True, **doc}
+    if att_col.find_one(duplicate_check):
+        return {"error": "already"}
+    doc = {
+        "student_id": student_id,
+        "date": date_str,
+        "time": when_dt.strftime("%H:%M:%S"),
+        "status": int(status),
+        "course": course,
+        "method": method,
+        "ts": when_dt,
+        "created_by": created_by
+    }
+    att_col.insert_one(doc)
+    return {"ok": True, **doc}
 
 
 def create_attendance_session(sessions_col, use_mongo, course=None, duration_hours=24, description=""):
@@ -225,8 +232,8 @@ def create_attendance_session(sessions_col, use_mongo, course=None, duration_hou
         "course": course,
         "description": description,
         "created_by": st.session_state.auth.get("username"),
-        "created_at": datetime.now() if use_mongo else datetime.now().isoformat(),
-        "expires_at": expires_at if use_mongo else expires_at.isoformat(),
+        "created_at": datetime.now(),
+        "expires_at": expires_at,
         "is_active": True,
         "attendance_count": 0
     }
@@ -244,8 +251,8 @@ def create_student_attendance_link(links_col, use_mongo, student_id, duration_ho
         "link_id": link_id,
         "student_id": student_id,
         "created_by": st.session_state.auth.get("username"),
-        "created_at": datetime.now() if use_mongo else datetime.now().isoformat(),
-        "expires_at": expires_at if use_mongo else expires_at.isoformat(),
+        "created_at": datetime.now(),
+        "expires_at": expires_at,
         "is_active": True,
         "uses": 0,
         "max_uses": None
@@ -265,35 +272,18 @@ def get_students_df(students_col):
 
 def get_attendance_rows(att_col, use_mongo, start=None, end=None, course=None):
     """Get attendance rows with user isolation"""
-    if use_mongo:
-        q = {}
-        if start or end:
-            q["date"] = {}
-        if start:
-            q["date"]["$gte"] = start.isoformat()
-        if end:
-            q["date"]["$lte"] = end.isoformat()
-        if course and course != "All":
-            q["course"] = course
-        q.update(get_user_filter())  # Add user isolation filter
-        rows = list(att_col.find(q))
-        return pd.DataFrame(rows) if rows else pd.DataFrame(columns=["student_id", "date", "status", "time", "course", "method"])
-    else:
-        user_filter = get_user_filter()
-        rows = att_col.find(user_filter)  # Apply user isolation filter
-        df = pd.DataFrame(rows) if rows else pd.DataFrame(columns=["student_id", "date", "status", "time", "course", "method"])
-
-        if not df.empty and (start or end):
-            df = df.copy()
-            if start:
-                df = df[df["date"] >= start.isoformat()]
-            if end:
-                df = df[df["date"] <= end.isoformat()]
-
-        if not df.empty and course and course != "All":
-            df = df[df["course"] == course]
-
-        return df
+    q = {}
+    if start or end:
+        q["date"] = {}
+    if start:
+        q["date"]["$gte"] = start.isoformat()
+    if end:
+        q["date"]["$lte"] = end.isoformat()
+    if course and course != "All":
+        q["course"] = course
+    q.update(get_user_filter())  # Add user isolation filter
+    rows = list(att_col.find(q))
+    return pd.DataFrame(rows) if rows else pd.DataFrame(columns=["student_id", "date", "status", "time", "course", "method"])
 
 
 def pivot_attendance(students_col, att_col, use_mongo, start, end, course=None):

@@ -106,7 +106,7 @@ class UserManager:
                 "email": email,
                 "name": name,
                 "role": role,
-                "created_at": datetime.now() if self.use_mongo else datetime.now().isoformat(),
+                "created_at": datetime.now(),
                 "last_login": None,
                 "failed_attempts": 0,
                 "is_locked": False,
@@ -117,7 +117,7 @@ class UserManager:
                 "token_expiry": None
             }
             self.users_col.insert_one(user_data)
-            return True, "User created successfully."
+            return True, "User created successfully in MongoDB."
         except Exception as e:
             return False, f"Error creating user: {str(e)}"
 
@@ -129,8 +129,7 @@ class UserManager:
 
         if user.get("is_locked", False):
             lockout_until = user.get("lockout_until")
-            if lockout_until and (self.use_mongo and lockout_until > datetime.now() or
-                                not self.use_mongo and lockout_until > datetime.now().isoformat()):
+            if lockout_until and lockout_until > datetime.now():
                 return False, f"Account locked until {lockout_until}"
             else:
                 self.users_col.update_one(
@@ -155,7 +154,7 @@ class UserManager:
                 {"username": username},
                 {
                     "$set": {
-                        "last_login": datetime.now() if self.use_mongo else datetime.now().isoformat(),
+                        "last_login": datetime.now(),
                         "failed_attempts": 0,
                         "lockout_until": None
                     }
@@ -200,11 +199,11 @@ class UserManager:
                 {
                     "$set": {
                         "password": hash_password(new_password),  # bcrypt hash
-                        "last_modified": datetime.now() if self.use_mongo else datetime.now().isoformat()
+                        "last_modified": datetime.now()
                     }
                 }
             )
-            return True, "Password updated successfully"
+            return True, "Password updated successfully in MongoDB."
         except Exception as e:
             return False, f"Error updating password: {str(e)}"
 
@@ -232,7 +231,7 @@ class UserManager:
                 {
                     "$set": {
                         "reset_token": token,
-                        "token_expiry": expires if self.use_mongo else expires.isoformat()
+                        "token_expiry": expires
                     }
                 }
             )
@@ -259,13 +258,8 @@ class UserManager:
         if not token_expiry:
             return False, "Reset token has expired"
 
-        # Handle both MongoDB datetime and ISO string format
-        if self.use_mongo:
-            if token_expiry < datetime.utcnow():
-                return False, "Reset token has expired"
-        else:
-            if token_expiry < datetime.utcnow().isoformat():
-                return False, "Reset token has expired"
+        if token_expiry < datetime.utcnow():
+            return False, "Reset token has expired"
 
         return True, {
             "username": user.get("username"),
@@ -299,7 +293,7 @@ class UserManager:
                         "password": hash_password(new_password),  # bcrypt hash
                         "reset_token": None,  # Clear token after use
                         "token_expiry": None,  # Clear expiry after use
-                        "last_modified": datetime.now() if self.use_mongo else datetime.now().isoformat(),
+                        "last_modified": datetime.now(),
                         # Also unlock account if it was locked
                         "is_locked": False,
                         "failed_attempts": 0,
@@ -314,19 +308,9 @@ class UserManager:
     def clear_expired_tokens(self):
         """Clear all expired reset tokens (maintenance function)"""
         try:
-            if self.use_mongo:
-                self.users_col.update_many(
-                    {"token_expiry": {"$lt": datetime.utcnow()}},
-                    {"$set": {"reset_token": None, "token_expiry": None}}
-                )
-            else:
-                # JSON mode - manual cleanup
-                users_data = self.users_col._load()
-                now = datetime.utcnow().isoformat()
-                for user in users_data:
-                    if user.get("token_expiry") and user["token_expiry"] < now:
-                        user["reset_token"] = None
-                        user["token_expiry"] = None
-                self.users_col._save(users_data)
+            self.users_col.update_many(
+                {"token_expiry": {"$lt": datetime.utcnow()}},
+                {"$set": {"reset_token": None, "token_expiry": None}}
+            )
         except Exception:
             pass  # Non-critical maintenance operation

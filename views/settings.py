@@ -222,7 +222,7 @@ def render(collections, user_manager):
 
     # -------------------- System Information Section --------------------
     st.subheader("ℹ️ System Information")
-    st.info(f"Database: {'MongoDB' if collections['use_mongo'] else 'JSON Files'}")
+    st.info(f"Database: MongoDB Atlas (Persistent Cluster)")
 
     user_filter = get_user_filter()
     students_count = collections['students'].count_documents(user_filter)

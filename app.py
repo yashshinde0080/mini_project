@@ -27,6 +27,10 @@ if not cookies.ready():
 
 # Get database collections
 collections = get_collections()
+
+if not collections['use_mongo']:
+    st.error(f"⚠️ **Database Connection Failed!** Running in local mode using temporary files. Data will NOT persist after restart.\n\nError: {collections.get('mongo_error')}")
+
 user_manager = UserManager(collections['users'], collections['use_mongo'])
 
 # Initialize session state

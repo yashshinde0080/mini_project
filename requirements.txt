@@ -13,3 +13,4 @@ python-barcode
 numpy
 bcrypt
 sendgrid
+dnspython

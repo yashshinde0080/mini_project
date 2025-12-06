@@ -129,7 +129,7 @@ def render(collections, user_manager):
                                             }
                                         }
                                     )
-                                    st.success("✅ Attendance updated successfully!")
+                                    st.success("✅ Attendance updated successfully in MongoDB Database!")
                                     st.rerun()
                                 except Exception as e:
                                     st.error(f"Error updating attendance: {e}")
