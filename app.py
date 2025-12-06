@@ -225,7 +225,7 @@ def display_session_attendance_form(session, students_col):
         st.session_state.scanned_student_id = ""
 
     # QR/Barcode scanning section (OUTSIDE the form)
-    st.markdown("### 📷 Option 1: Scan Your QR Code/Barcode")
+    st.markdown("### 📷 Scan Your QR Code/Barcode")
     camera_image = st.camera_input("Take a photo of your QR code or barcode")
 
     if camera_image is not None:
@@ -273,52 +273,7 @@ def display_session_attendance_form(session, students_col):
         except Exception as e:
             st.error(f"Error processing image: {str(e)}")
 
-    st.markdown("---")
-    st.markdown("### ⌨️ Option 2: Manual Entry")
 
-    with st.form("session_attendance"):
-        # Pre-fill with scanned ID if available
-        default_id = st.session_state.scanned_student_id if st.session_state.scanned_student_id else ""
-        student_id = st.text_input("🆔 Enter your Student ID", value=default_id, placeholder="e.g., STU001")
-        student_name = st.text_input("👤 Enter your Name", placeholder="Your full name")
-
-        if st.form_submit_button("✅ Mark Present", type="primary"):
-            if not student_id:
-                st.error("Please enter your Student ID")
-            elif not student_name:
-                st.error("Please enter your name")
-            else:
-                # Look up student using session owner's data
-                student = students_col.find_one({"student_id": student_id, "created_by": session_owner})
-                if not student:
-                    st.error("❌ Student ID not found in database. Please contact your teacher.")
-                else:
-                    if student.get("name", "").lower() != student_name.lower():
-                        st.warning("⚠️ Name doesn't match our records, but attendance will be marked.")
-
-                    result = mark_attendance(
-                        collections['attendance'],
-                        collections['use_mongo'],
-                        student_id,
-                        1,
-                        datetime.now(),
-                        course=session.get("course"),
-                        method="session_link",
-                        created_by_override=session_owner
-                    )
-
-                    if "error" in result and result["error"] == "already":
-                        st.warning(f"⚠️ Attendance already marked for today!")
-                    else:
-                        st.success(f"🎉 Attendance marked successfully!")
-                        # Clear the scanned ID
-                        st.session_state.scanned_student_id = ""
-                        if collections['use_mongo']:
-                            collections['sessions'].update_one(
-                                {"session_id": session["session_id"]},
-                                {"$inc": {"attendance_count": 1}}
-                            )
-                        st.balloons()
 
 
 def handle_student_attendance_link(link_id):
