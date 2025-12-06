@@ -1,11 +1,11 @@
-import os
+import os # Force Update
 import base64
 import io
 import zipfile
 import pandas as pd
 import streamlit as st
 from PIL import Image
-from helpers import get_students_df, make_qr, make_barcode, get_user_filter, get_qr_image, get_barcode_image
+from helpers import get_students_df, make_qr, make_barcode, get_user_filter, get_qr_image as generate_qr_img, get_barcode_image as generate_barcode_img
 
 
 def render(collections):
@@ -33,13 +33,13 @@ def render(collections):
                     else:
                         try:
                             # Generate Base64 images for persistence
-                            qr_img = get_qr_image(sid)
+                            qr_img = generate_qr_img(sid)
                             qr_buf = io.BytesIO()
                             qr_img.save(qr_buf, format="PNG")
                             qr_b64 = base64.b64encode(qr_buf.getvalue()).decode()
                             
                             bc_b64 = None
-                            bc_img = get_barcode_image(sid)
+                            bc_img = generate_barcode_img(sid)
                             if bc_img:
                                 bc_buf = io.BytesIO()
                                 bc_img.save(bc_buf, format="PNG")
@@ -91,13 +91,13 @@ def render(collections):
                     else:
                         try:
                             # Generate Base64 images for persistence
-                            qr_img = get_qr_image(scanner_student_id)
+                            qr_img = generate_qr_img(scanner_student_id)
                             qr_buf = io.BytesIO()
                             qr_img.save(qr_buf, format="PNG")
                             qr_b64 = base64.b64encode(qr_buf.getvalue()).decode()
                             
                             bc_b64 = None
-                            bc_img = get_barcode_image(scanner_student_id)
+                            bc_img = generate_barcode_img(scanner_student_id)
                             if bc_img:
                                 bc_buf = io.BytesIO()
                                 bc_img.save(bc_buf, format="PNG")
@@ -144,13 +144,13 @@ def render(collections):
 
                     try:
                         # Generate Base64 images for persistence
-                        qr_img = get_qr_image(sid)
+                        qr_img = generate_qr_img(sid)
                         qr_buf = io.BytesIO()
                         qr_img.save(qr_buf, format="PNG")
                         qr_b64 = base64.b64encode(qr_buf.getvalue()).decode()
                         
                         bc_b64 = None
-                        bc_img = get_barcode_image(sid)
+                        bc_img = generate_barcode_img(sid)
                         if bc_img:
                             bc_buf = io.BytesIO()
                             bc_img.save(bc_buf, format="PNG")
@@ -230,7 +230,7 @@ def render(collections):
                 
                 if not byte_im:
                     # Fallback: Generate on the fly
-                    qr_img = get_qr_image(selected_student)
+                    qr_img = generate_qr_img(selected_student)
                     buf = io.BytesIO()
                     qr_img.save(buf, format="PNG")
                     byte_im = buf.getvalue()
@@ -251,7 +251,7 @@ def render(collections):
                 
                 if not byte_im:
                     # Fallback: Generate on the fly
-                    barcode_img_pil = get_barcode_image(selected_student)
+                    barcode_img_pil = generate_barcode_img(selected_student)
                     if barcode_img_pil:
                         buf = io.BytesIO()
                         barcode_img_pil.save(buf, format="PNG")
