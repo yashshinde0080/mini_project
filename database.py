@@ -162,17 +162,19 @@ def initialize_database():
         if not MONGO_URI or not DB_NAME:
             raise ValueError("MONGODB_URI or MONGODB_DB not found in secrets/environment")
 
-        # Increase timeout for production reliability and retry logic
+        # Connection with SSL/TLS fix for Streamlit Cloud
         client = MongoClient(
             MONGO_URI,
-            serverSelectionTimeoutMS=15000,
-            connectTimeoutMS=15000,
-            socketTimeoutMS=15000,
+            serverSelectionTimeoutMS=20000,
+            connectTimeoutMS=20000,
+            socketTimeoutMS=20000,
             retryWrites=True,
-            w='majority'
+            w='majority',
+            tls=True,
+            tlsAllowInvalidCertificates=True
         )
 
-        # Force connection test - this will raise an exception if connection fails
+        # Force connection test
         client.admin.command('ping')
 
         db = client[DB_NAME]
@@ -182,24 +184,17 @@ def initialize_database():
         sessions_col = db["attendance_sessions"]
         links_col = db["attendance_links"]
 
-        # Create indexes for user isolation and data integrity
+        # Create indexes
         try:
-            # Users collection
             users_col.create_index("username", unique=True, background=True)
             users_col.create_index("user_id", unique=True, sparse=True, background=True)
             users_col.create_index("email", unique=True, sparse=True, background=True)
             users_col.create_index("password_reset_token", background=True)
-
-            # Students collection
             students_col.create_index([("student_id", 1), ("created_by", 1)], unique=True, background=True)
             students_col.create_index("created_by", background=True)
-
-            # Attendance collection
             att_col.create_index([("student_id", 1), ("date", 1), ("created_by", 1)], unique=True, background=True)
             att_col.create_index("created_by", background=True)
             att_col.create_index([("created_by", 1), ("date", 1)], background=True)
-
-            # Sessions and links collections
             sessions_col.create_index("session_id", unique=True, background=True)
             sessions_col.create_index("created_by", background=True)
             sessions_col.create_index("expires_at", expireAfterSeconds=0, background=True)
@@ -207,58 +202,31 @@ def initialize_database():
             links_col.create_index("created_by", background=True)
             links_col.create_index("expires_at", expireAfterSeconds=0, background=True)
         except Exception as idx_error:
-            print(f"Index note: {idx_error}")
+            print(f"Index creation note: {idx_error}")
 
         use_mongo = True
         print("✅ MongoDB connected successfully")
         return True
 
-    except mongo_errors.ServerSelectionTimeoutError as e:
-        print(f"\n{'=' * 80}")
-        print("❌ MongoDB Connection Timeout")
-        print(f"{'=' * 80}")
-        print(f"Error: {str(e)}")
-        print("\n🔧 SOLUTION:")
-        print("1. Go to MongoDB Atlas → Network Access")
-        print("2. Click 'Add IP Address'")
-        print("3. Select 'Allow Access from Anywhere' (0.0.0.0/0)")
-        print("4. This is required for Streamlit Cloud's dynamic IPs")
-        print(f"\n{'=' * 80}\n")
-        return False
-
-    except mongo_errors.OperationFailure as e:
-        print(f"\n{'=' * 80}")
-        print("❌ MongoDB Authentication Failed")
-        print(f"{'=' * 80}")
-        print(f"Error: {str(e)}")
-        print("\n🔧 SOLUTION:")
-        print("Check your MONGODB_URI username and password in secrets")
-        print(f"\n{'=' * 80}\n")
-        return False
-
-    except mongo_errors.ConfigurationError as e:
-        print(f"\n{'=' * 80}")
-        print("❌ MongoDB Configuration Error")
-        print(f"{'=' * 80}")
-        print(f"Error: {str(e)}")
-        print("\n🔧 SOLUTION:")
-        print("Check your MONGODB_URI format in secrets")
-        print(f"\n{'=' * 80}\n")
-        return False
-
-    except ValueError as e:
-        print(f"\n{'=' * 80}")
-        print("❌ Missing MongoDB Configuration")
-        print(f"{'=' * 80}")
-        print(f"Error: {str(e)}")
-        print(f"\n{'=' * 80}\n")
-        return False
-
     except Exception as e:
+        error_type = type(e).__name__
+        error_msg = str(e)
+
         print(f"\n{'=' * 80}")
-        print("❌ Unexpected MongoDB Error")
+        print(f"❌ MongoDB Connection Failed: {error_type}")
         print(f"{'=' * 80}")
-        print(f"Error: {type(e).__name__}: {str(e)}")
+        print(f"Error: {error_msg}")
+
+        if "SSL" in error_msg or "TLS" in error_msg:
+            print("\n🔧 SSL/TLS Error - Update your connection string:")
+            print("Add to your MONGODB_URI: ?ssl=true&ssl_cert_reqs=CERT_NONE")
+        elif "ServerSelectionTimeout" in error_type:
+            print("\n🔧 Connection Timeout - Check:")
+            print("1. MongoDB Atlas → Network Access → Add 0.0.0.0/0")
+            print("2. Cluster is not paused")
+        elif "OperationFailure" in error_type or "Authentication" in error_msg:
+            print("\n🔧 Authentication Error - Check credentials in MONGODB_URI")
+
         print(f"\n{'=' * 80}\n")
         return False
 
@@ -271,12 +239,11 @@ if not mongodb_connected:
     is_local = os.path.exists('.env')
 
     if not is_local:
-        # Production: Show error but don't crash - allow app to start with warning
-        print("⚠️  WARNING: Running in production WITHOUT persistent database!")
-        print("⚠️  All data will be lost on app restart!")
+        print("⚠️  WARNING: Running in PRODUCTION without persistent database!")
+        print("⚠️  All data will be LOST on app restart!")
         print("⚠️  Fix MongoDB connection for data persistence!")
 
-    print("🔄 Initializing local JSON storage")
+    print("🔄 Initializing local JSON storage (ephemeral)")
     data_dir = os.path.join(os.path.dirname(__file__), "data")
     os.makedirs(data_dir, exist_ok=True)
     USERS_FILE = os.path.join(data_dir, "users.json")
