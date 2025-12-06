@@ -175,13 +175,16 @@ def render(collections):
                 st.markdown("**QR Code:**")
                 # Generate on the fly
                 qr_img = get_qr_image(selected_student)
-                st.image(qr_img, width=200)
                 
-                # buffer for download
+                # Convert to bytes for robust Streamlit display
                 buf = io.BytesIO()
                 qr_img.save(buf, format="PNG")
-                buf.seek(0)
+                byte_im = buf.getvalue()
                 
+                st.image(byte_im, width=200)
+                
+                # Use same buffer for download
+                buf.seek(0)
                 st.download_button("📥 Download QR", buf, file_name=f"{selected_student}_qr.png", mime="image/png")
 
             with col2:
@@ -189,13 +192,15 @@ def render(collections):
                 # Generate on the fly
                 barcode_img_pil = get_barcode_image(selected_student)
                 if barcode_img_pil:
-                    st.image(barcode_img_pil, width=200)
-                    
-                    # buffer for download
+                    # Convert to bytes for robust Streamlit display
                     buf = io.BytesIO()
                     barcode_img_pil.save(buf, format="PNG")
-                    buf.seek(0)
+                    byte_im = buf.getvalue()
                     
+                    st.image(byte_im, width=200)
+                    
+                    # Use same buffer for download
+                    buf.seek(0)
                     st.download_button("📥 Download Barcode", buf, file_name=f"{selected_student}_barcode.png", mime="image/png")
                 else:
                     st.warning("Barcode generation unavailable")
