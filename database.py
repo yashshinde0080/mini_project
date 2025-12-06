@@ -35,6 +35,7 @@ links_col = None
 class SimpleCol:
     def __init__(self, path):
         self.path = path
+        self.name = os.path.basename(path).replace('.json', '')
 
     def _load(self):
         try:
@@ -51,6 +52,7 @@ class SimpleCol:
     def _save(self, data):
         with open(self.path, "w") as fh:
             json.dump(data, fh, default=str, indent=2)
+        print(f"⚠️  JSON WRITE: {self.name} - {len(data)} documents (EPHEMERAL - WILL BE LOST!)")
 
     def find_one(self, filt):
         data = self._load()
@@ -83,6 +85,7 @@ class SimpleCol:
         data = self._load()
         data.append(doc)
         self._save(data)
+        print(f"⚠️  JSON INSERT: {self.name} - Document added (NOT PERSISTENT)")
         return {"inserted_id": len(data)}
 
     def update_one(self, filt, update, upsert=False):
@@ -107,6 +110,7 @@ class SimpleCol:
                 new.update(update["$set"])
             data.append(new)
         self._save(data)
+        print(f"⚠️  JSON UPDATE: {self.name} - Document updated (NOT PERSISTENT)")
 
     def update_many(self, filt, update):
         data = self._load()
@@ -129,6 +133,7 @@ class SimpleCol:
                 data[i] = d
                 modified_count += 1
         self._save(data)
+        print(f"⚠️  JSON UPDATE MANY: {self.name} - {modified_count} documents updated (NOT PERSISTENT)")
         return type('obj', (object,), {'modified_count': modified_count})()
 
     def delete_many(self, filt):
@@ -146,6 +151,7 @@ class SimpleCol:
             else:
                 removed += 1
         self._save(out)
+        print(f"⚠️  JSON DELETE: {self.name} - {removed} documents deleted (NOT PERSISTENT)")
         return {"deleted_count": removed}
 
     def count_documents(self, filt=None):
@@ -206,6 +212,31 @@ def initialize_database():
 
         use_mongo = True
         print("✅ MongoDB connected successfully")
+        print(f"📊 Database: {DB_NAME}")
+        print(f"🔗 Cluster: {MONGO_URI.split('@')[1].split('/')[0] if '@' in MONGO_URI else 'unknown'}")
+
+        # FORCE a test write to verify it's actually working
+        try:
+            test_result = users_col.insert_one({
+                "_test_connection": True,
+                "timestamp": datetime.now(),
+                "message": "MongoDB write test successful"
+            })
+            print(f"✅ Write test successful - inserted ID: {test_result.inserted_id}")
+
+            # Verify we can read it back
+            found = users_col.find_one({"_test_connection": True})
+            if found:
+                print(f"✅ Read test successful - found document")
+                # Clean up test document
+                users_col.delete_one({"_test_connection": True})
+                print(f"✅ Delete test successful")
+            else:
+                print("❌ WARNING: Could not read back test document!")
+
+        except Exception as test_error:
+            print(f"❌ WARNING: Write/Read test failed: {test_error}")
+
         return True
 
     except Exception as e:
@@ -404,10 +435,66 @@ def get_database_status():
 
     if use_mongo and users_col:
         try:
+            # Test read
             users_col.find_one({"_test": "connection"})
             status['query_test'] = 'OK'
+
+            # Get actual document counts
+            status['user_count'] = users_col.count_documents({})
+            status['student_count'] = students_col.count_documents({})
+            status['attendance_count'] = att_col.count_documents({})
+
+            # Test write
+            test_doc = {"_test": "write_check", "timestamp": datetime.now()}
+            users_col.insert_one(test_doc)
+            users_col.delete_many({"_test": "write_check"})
+            status['write_test'] = 'OK'
+
         except Exception as e:
             status['query_test'] = f'FAILED: {str(e)}'
             status['persistent'] = False
 
     return status
+
+
+def verify_data_write(collection_name, username=None):
+    """
+    Verify data is actually being written to MongoDB.
+    Call this after any create/update operation to debug.
+    """
+    if not use_mongo:
+        return {"error": "Not using MongoDB"}
+
+    try:
+        col = {
+            'users': users_col,
+            'students': students_col,
+            'attendance': att_col,
+            'sessions': sessions_col,
+            'links': links_col
+        }.get(collection_name)
+
+        if not col:
+            return {"error": f"Invalid collection: {collection_name}"}
+
+        # Count total documents
+        total = col.count_documents({})
+
+        # If username provided, count user-specific documents
+        user_specific = None
+        if username and collection_name != 'users':
+            user_specific = col.count_documents({"created_by": username})
+
+        # Get sample document
+        sample = col.find_one({})
+
+        return {
+            "collection": collection_name,
+            "database": DB_NAME,
+            "total_documents": total,
+            "user_documents": user_specific,
+            "sample_doc": sample,
+            "mongodb_connected": use_mongo
+        }
+    except Exception as e:
+        return {"error": str(e)}
